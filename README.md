@@ -56,7 +56,7 @@ Output:
 
 | Check | What it does |
 |---|---|
-| `Check.threshold(field, min=, max=)` | Fails when a numeric claim is outside a bound (SOP red lines, budget caps…) |
+| `Check.threshold(field, min=, max=, expect_range=)` | Fails when a numeric claim is outside a bound (SOP red lines, budget caps…). `expect_range` declares the field's scale, so a value from another scale is an error instead of a silent pass |
 | `Check.consistency(target, formula, tolerance=0.01)` | Recomputes `formula` from the other claims and compares it to `target` |
 | `Check.freshness(field, max_age_days)` | Warns when a date / timestamp claim is stale |
 | `Check.custom(name, fn)` | Your own `fn(claims, source) -> None \| AuditIssue \| SKIP` |
@@ -97,8 +97,16 @@ class SqlSource:
 
 ## Safety
 
-- **No code execution in formulas.** `consistency` expressions are parsed with a restricted AST walker: numbers, names and `+ - * / ** %` only. Calls, attributes and indexing are rejected — a model-generated formula cannot execute code (there is a test for this).
-- **A broken check never crashes the audit.** Exceptions raised inside a check become an `error` issue instead of propagating.
+- **No code execution in formulas.** `consistency` expressions are parsed with a restricted AST walker: numeric constants, names and `+ - * / ** %` only. Calls, attributes, indexing and non-numeric constants are rejected, and the exponent of `**` is capped at 64 — a model-generated formula cannot execute code, and cannot pin a worker either. (Tests: `tests/test_hardening.py`.)
+- **A broken check never crashes the audit.** Exceptions raised inside a check become an `error` issue instead of propagating, and a check returning something other than `None | AuditIssue | SKIP` is coerced into an error rather than breaking `report.passed`.
+- **A broken formula fails the formula, not the claim.** Rejecting the expression up front is deliberate: `consistency` with an invalid formula must not be reported as "the data is wrong".
+
+### Units
+
+`agent-audit` does not infer units. `0.348` and `34.8` are both valid numbers; which
+one a field means is a property of *your* schema. Declare it with `expect_range`
+and, when you have ground truth, compare against it — that comparison is what
+catches a report and its source expressed in different units.
 
 ## Why not X?
 

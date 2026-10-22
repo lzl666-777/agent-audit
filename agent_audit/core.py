@@ -101,9 +101,24 @@ class Auditor:
                 )
             if outcome is SKIP:
                 report.skipped += 1
-            elif outcome is None:
+                continue
+            if outcome is None:
                 report.checked += 1
-            else:
-                report.checked += 1
-                report.issues.append(outcome)
+                continue
+            if not isinstance(outcome, AuditIssue):
+                # A custom check returning a string / bool / list used to be
+                # appended as-is, and the next `report.passed` blew up with
+                # AttributeError inside the caller's business code. Coerce it
+                # here, fail closed, and say what happened.
+                outcome = AuditIssue(
+                    check=getattr(check, "name", "unknown"),
+                    field="*",
+                    message=(
+                        f"check returned {type(outcome).__name__}, expected "
+                        f"None/AuditIssue/SKIP: {outcome!r}"
+                    ),
+                    severity="error",
+                )
+            report.checked += 1
+            report.issues.append(outcome)
         return report

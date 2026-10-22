@@ -12,7 +12,7 @@ from __future__ import annotations
 import ast
 import operator
 from datetime import date, datetime, timezone
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Tuple
 
 from .core import AuditIssue, SKIP
 
@@ -29,6 +29,11 @@ _BIN_OPS = {
     ast.Mod: operator.mod,
 }
 _UNARY_OPS = {ast.USub: operator.neg, ast.UAdd: operator.pos}
+
+#: ``**`` is allowed, but an unbounded exponent lets one model-generated formula
+#: pin a worker: ``2 ** 10 ** 9`` burns seconds and hundreds of MB before it even
+#: has to be printed. The AST allowlist prevents code execution, not exhaustion.
+_MAX_EXPONENT = 64
 
 _DATE_FORMATS = ("%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y/%m/%d", "%Y-%m-%d %H:%M:%S")
 
@@ -76,9 +81,11 @@ def expr_names(expr: str) -> set:
 def safe_eval(expr: str, variables: dict) -> float:
     """Evaluate a simple arithmetic expression on named variables.
 
-    Only numbers, names, ``+ - * / ** %`` and unary signs are allowed;
-    calls, attributes, indexing and comparisons are rejected, so this is safe
-    to run on model-generated formulas.
+    Only numeric constants, names, ``+ - * / ** %`` and unary signs are allowed;
+    calls, attributes, indexing, strings and comparisons are rejected, and the
+    exponent of ``**`` is capped. This is safe to run on model-generated
+    formulas without handing the model a way to execute code or exhaust a
+    worker.
     """
     tree = ast.parse(expr, mode="eval")
 
@@ -86,11 +93,22 @@ def safe_eval(expr: str, variables: dict) -> float:
         if isinstance(node, ast.Expression):
             return _walk(node.body)
         if isinstance(node, ast.Constant):
+            # A string constant used to slip through and made `consistency`
+            # crash later, which `Auditor` then reported as a *failed claim*:
+            # the audit blamed the data for a broken formula.
+            if isinstance(node.value, bool) or not isinstance(node.value, (int, float)):
+                raise ValueError(f"only numeric constants are allowed, got {node.value!r}")
             return node.value
         if isinstance(node, ast.Name):
             if node.id not in variables:
                 raise KeyError(f"unknown variable: {node.id}")
             return variables[node.id]
+        if isinstance(node, ast.BinOp) and type(node.op) is ast.Pow:
+            base = _walk(node.left)
+            exponent = _walk(node.right)
+            if abs(exponent) > _MAX_EXPONENT:
+                raise ValueError(f"exponent {exponent:g} exceeds the limit of {_MAX_EXPONENT}")
+            return base ** exponent
         if isinstance(node, ast.BinOp) and type(node.op) in _BIN_OPS:
             return _BIN_OPS[type(node.op)](_walk(node.left), _walk(node.right))
         if isinstance(node, ast.UnaryOp) and type(node.op) in _UNARY_OPS:
@@ -125,18 +143,38 @@ class Check:
         min: Optional[float] = None,
         max: Optional[float] = None,
         severity: str = "error",
+        expect_range: Optional[Tuple[float, float]] = None,
     ) -> "Check":
         """Fail when ``claims[field]`` is outside ``[min, max]``.
 
-        Example::
+        Pass ``expect_range`` when the scale of the field is known, so a value
+        from a different scale is reported as an error instead of being compared
+        against a bound it was never measured in::
 
-            Check.threshold("return_rate", max=0.08)  # SOP red line
+            # a ratio field that receives a percentage
+            Check.threshold("conversion_rate", max=1.0, expect_range=(0, 1))
+            # -> claim 34.8 is out of range -> error, not a silent "exceeds max"
+
+        It cannot tell ``0.348`` from ``34.8`` inside a ``(0, 100)`` range — units
+        are a property of your schema, not of the library. When you have a
+        ground-truth source, compare against it (``consistency``/``custom``):
+        that is what catches a claim and its truth expressed in different units.
         """
 
         def _run(claims: dict, source: Any):
             value = _to_number(claims.get(field))
             if value is None:
                 return SKIP
+            if expect_range is not None:
+                low, high = expect_range
+                if not (low <= value <= high):
+                    return AuditIssue(
+                        f"threshold({field})", field,
+                        f"value {value:g} is outside the expected scale "
+                        f"[{low:g}, {high:g}] - the claim is in different units "
+                        f"than the bound",
+                        "error", expected=f"within [{low:g}, {high:g}]", actual=value,
+                    )
             if max is not None and value > max:
                 return AuditIssue(
                     f"threshold({field})", field, f"value {value:g} exceeds max {max:g}",
