@@ -77,6 +77,30 @@ def test_unit_mismatch_is_flagged():
     assert "different units" in report.errors[0].message
 
 
+def test_broken_formula_fails_closed_not_skipped():
+    """A formula that cannot be evaluated must fail the audit, not silently skip.
+
+    Regression: ``Check.consistency`` swallowed ``safe_eval`` errors and returned
+    ``SKIP``; ``AuditReport.passed`` then stayed True. A typo in a safety rule
+    disabled the rule while looking like a clean audit.
+    """
+    report = Auditor([
+        Check.consistency("x", formula='"not a formula"'),
+    ]).check({"x": 1})
+    assert not report.passed
+    assert report.errors
+    assert report.errors[0].field == "*"
+    assert "configuration error" in report.errors[0].message
+
+
+def test_division_by_zero_fails_closed():
+    report = Auditor([
+        Check.consistency("x", formula="a / 0"),
+    ]).check({"x": 1, "a": 1})
+    assert not report.passed
+    assert "configuration error" in report.errors[0].message
+
+
 def test_in_range_value_is_compared_normally():
     report = Auditor([
         Check.threshold("return_rate", max=8.0, expect_range=(0, 100)),

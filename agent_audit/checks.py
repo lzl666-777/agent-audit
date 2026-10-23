@@ -230,8 +230,19 @@ class Check:
 
             try:
                 expected = safe_eval(formula, variables)
-            except Exception:
-                return SKIP
+            except Exception as exc:
+                # A formula that cannot be evaluated is an audit *configuration*
+                # error, not missing data. Returning SKIP here made the whole
+                # report pass with `skipped += 1`, i.e. a typo in a safety rule
+                # silently disabled the rule. Fail closed instead: the caller
+                # must fix the formula before trusting the audit.
+                return AuditIssue(
+                    f"consistency({target})",
+                    "*",
+                    "audit configuration error: formula %r could not be evaluated: "
+                    "%s: %s" % (formula, type(exc).__name__, exc),
+                    "error",
+                )
 
             if expected == 0:
                 ok = abs(actual) <= tolerance

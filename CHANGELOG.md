@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.1.2
+
+### Fixed
+
+- **Broken formula now fails closed.** `Check.consistency` caught every
+  `safe_eval` error and returned `SKIP`; `AuditReport.passed` then stayed
+  `True`, so a typo in a safety rule disabled the rule. A formula that cannot be
+  evaluated (non-numeric constant, division by zero, exponent cap, …) is now an
+  `error` issue with field `*`, not a skip.
+- Added regression tests for the string-constant and division-by-zero cases.
+
 ## 0.1.1
 
 Hardening found while wiring this library into a production agent (see

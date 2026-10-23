@@ -24,7 +24,7 @@ from .checks import Check, safe_eval
 from .core import AuditIssue, AuditReport, Auditor, SKIP
 from .sources import CallableSource, DataSource, DictSource
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 __all__ = [
     "Auditor",

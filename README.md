@@ -99,7 +99,10 @@ class SqlSource:
 
 - **No code execution in formulas.** `consistency` expressions are parsed with a restricted AST walker: numeric constants, names and `+ - * / ** %` only. Calls, attributes, indexing and non-numeric constants are rejected, and the exponent of `**` is capped at 64 — a model-generated formula cannot execute code, and cannot pin a worker either. (Tests: `tests/test_hardening.py`.)
 - **A broken check never crashes the audit.** Exceptions raised inside a check become an `error` issue instead of propagating, and a check returning something other than `None | AuditIssue | SKIP` is coerced into an error rather than breaking `report.passed`.
-- **A broken formula fails the formula, not the claim.** Rejecting the expression up front is deliberate: `consistency` with an invalid formula must not be reported as "the data is wrong".
+- **A broken formula fails the audit, not the claim.** A formula that cannot be
+  evaluated is reported as an `error` with field `*` (an audit configuration
+  error), so a typo in a rule can never silently become a `SKIP` and a clean
+  pass. It is deliberately not reported as "the data is wrong".
 
 ### Units
 
