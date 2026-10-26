@@ -121,7 +121,7 @@ They compose well: LLM-as-judge for open-ended prose, `agent-audit` for quantita
 ## Development
 
 ```bash
-git clone https://github.com/<you>/agent-audit.git
+git clone https://github.com/lzl666-777/agent-audit.git
 cd agent-audit
 pip install -e ".[dev]"
 pytest -q
